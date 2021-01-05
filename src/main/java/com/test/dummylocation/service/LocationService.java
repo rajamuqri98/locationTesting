@@ -10,6 +10,7 @@ import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.nfc.Tag;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,11 +20,15 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Process;
 import android.preference.PreferenceManager;
+import android.util.Log;
 import android.widget.Toast;
 
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -32,8 +37,9 @@ import androidx.core.app.ActivityCompat;
 public class LocationService extends Service {
 
     // Const values
-    private static final float MIN_DISTANCE_CHANGE_FOR_UPDATES = 1000; // in m  (1KM)
-    private static final long MIN_TIME_BETWEEN_UPDATES = 60 * 1000;    // in ms (1 min)
+    private static final String TAG = "LocationService";
+    private static final float MIN_DISTANCE_CHANGE_FOR_UPDATES = 0; // in m  (1KM)
+    private static final long MIN_TIME_BETWEEN_UPDATES = 5 * 1000;    // in ms (1 min)
 
     protected HandlerThread handlerThread;
     protected SharedPreferences sharedPreferences;
@@ -49,9 +55,6 @@ public class LocationService extends Service {
     protected Location currLocation;
 
     private ServiceHandler serviceHandler;
-    private String mLog, mLat;
-
-    private ThreadSubmitLoc TSL;
 
     @Nullable
     @Override
@@ -79,16 +82,11 @@ public class LocationService extends Service {
             @Override
             public void onLocationChanged(Location location) {
                 currLocation = location;
-                mLat = Double.toString(location.getLatitude()).trim();
-                mLog = Double.toString(location.getLongitude()).trim();
 
-                if (isUpdate) {
-                    String cLocation = "Current Location: (" + mLat + "," + mLog + ")";
-                    Toast.makeText(LocationService.this, cLocation, Toast.LENGTH_SHORT).show();
+                Message msg = serviceHandler.obtainMessage();
+                msg.arg2 = 1; // update Location
 
-                    TSL = new ThreadSubmitLoc(sharedPreferences, location);
-                    TSL.start();
-                }
+                serviceHandler.sendMessage(msg);
             }
 
             @Override
@@ -119,6 +117,7 @@ public class LocationService extends Service {
 
         Message msg = serviceHandler.obtainMessage();
         msg.arg1 = startId;
+        msg.arg2 = 0; // initialize
 
         serviceHandler.sendMessage(msg);
 
@@ -130,11 +129,10 @@ public class LocationService extends Service {
         Toast.makeText(this, "Service done", Toast.LENGTH_SHORT).show();
 
         if (currLocation != null) {
-            String cLocation = "Final Location: (" + currLocation.getLatitude() + "," + currLocation.getLongitude() + ")";
-            Toast.makeText(this, cLocation, Toast.LENGTH_SHORT).show();
+            Message msg = serviceHandler.obtainMessage();
+            msg.arg2 = 2; // Final Location
 
-            TSL = new ThreadSubmitLoc(sharedPreferences, currLocation);
-            TSL.start();
+            serviceHandler.sendMessage(msg);
         }
         locationManager.removeUpdates(locationListener);
         locationListener = null;
@@ -150,30 +148,44 @@ public class LocationService extends Service {
         @Override
         public void handleMessage(@NonNull Message msg) {
             // Main Job
-            if (locationManager != null) {
-                checkPermission(msg.arg1);
-                checkGPS(msg.arg1);
-                locationManager.requestLocationUpdates(locationProvider,
-                        MIN_TIME_BETWEEN_UPDATES,
-                        MIN_DISTANCE_CHANGE_FOR_UPDATES,
-                        locationListener);
-                currLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            switch (msg.arg2) {
+                case 0: {
+                    if (locationManager != null) {
+                        checkPermission(msg.arg1);
+                        checkGPS(msg.arg1);
+                        locationManager.requestLocationUpdates(locationProvider,
+                                MIN_TIME_BETWEEN_UPDATES,
+                                MIN_DISTANCE_CHANGE_FOR_UPDATES,
+                                locationListener);
+                        currLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                    }
+                    break;
+                }
+                case 1: {
+                    String text = "Current Location: " +
+                            "(" + currLocation.getLatitude() + "," + currLocation.getLongitude() +")\n" +
+                            "Current Time: " + dateTimeHandler(GetDateTime());
+                    Toast.makeText(LocationService.this, text, Toast.LENGTH_SHORT).show();
+                    Log.i(TAG, text);
+                    break;
+                }
+                case 2: {
+                    String text = "Final Location: " +
+                            "(" + currLocation.getLatitude() + "," + currLocation.getLongitude() +")\n" +
+                            "Current Time: " + dateTimeHandler(GetDateTime());
+                    Toast.makeText(LocationService.this, text, Toast.LENGTH_SHORT).show();
+                    Log.i(TAG, text);
+                }
             }
+
         }
     }
 
     private void checkPermission(int id) {
-        if (ActivityCompat.checkSelfPermission(LocationService.this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED ) {
+        if (ActivityCompat.checkSelfPermission(LocationService.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(LocationService.this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED ){
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Toast.makeText(LocationService.this, "ACCESS FINE LOCATION not permitted.", Toast.LENGTH_SHORT).show();
-                stopSelf(id);
-            }
-        }
-        if (ActivityCompat.checkSelfPermission(LocationService.this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED){
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Toast.makeText(LocationService.this, "ACCESS COARSE LOCATION not permitted.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(LocationService.this, "ACCESS LOCATION not permitted.", Toast.LENGTH_SHORT).show();
                 stopSelf(id);
             }
         }
@@ -197,6 +209,33 @@ public class LocationService extends Service {
             isUpdate = false;
             stopSelf(id);
         }
+    }
+
+    public static String GetDateTime() {
+        Calendar c = Calendar.getInstance();
+
+        SimpleDateFormat SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH);
+
+        return SDF.format(c.getTime());
+    }
+
+    public static String dateTimeHandler(String cDate) {
+        SimpleDateFormat SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH);
+        SDF.setTimeZone(TimeZone.getDefault());
+
+        Date date;
+        try {
+            date = SDF.parse(cDate);
+
+            SDF.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+            if (date != null) {
+                return SDF.format(date);
+            }
+        } catch (ParseException e) {
+            Log.e("ServerDate", e.toString());
+        }
+        return "";
     }
 
 }

@@ -32,8 +32,7 @@ import androidx.core.app.ActivityCompat;
 
 public class MainActivity extends AppCompatActivity{
 
-    private static final int COARSE_LOCATION_REQUEST_CODE = 101;
-    private static final int FINE_LOCATION_REQUEST_CODE = 102;
+    private static final int LOCATION_REQUEST_CODE = 1001;
     Button btnStart, btnStop, btnNext;
 
     TextView locationText;
@@ -80,17 +79,10 @@ public class MainActivity extends AppCompatActivity{
     }
 
     private boolean checkPermission() {
-        if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED ) {
+        if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},FINE_LOCATION_REQUEST_CODE);
-                return false;
-            }
-        }
-        if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED){
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},COARSE_LOCATION_REQUEST_CODE);
+                requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},LOCATION_REQUEST_CODE);
                 return false;
             }
         }
