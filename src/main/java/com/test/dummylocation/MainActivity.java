@@ -2,6 +2,9 @@ package com.test.dummylocation;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.ActivityManager;
+import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -40,6 +43,9 @@ public class MainActivity extends AppCompatActivity{
                 if(!checkPermission()) {
                     return;
                 }
+                if (isMyServiceRunning(LocationService.class)) {
+                    initializeLocationService(1);
+                }
                 initializeLocationService(0);
                 btnStart.setEnabled(false);
                 btnStop.setEnabled(true);
@@ -75,14 +81,25 @@ public class MainActivity extends AppCompatActivity{
     }
 
     private void initializeLocationService(int i) {
-        final Intent service = new Intent(MainActivity.this, LocationService.class);
+        Intent service = new Intent(MainActivity.this, LocationService.class);
         if (i == 0) {
-            service.putExtra("Command", 0);
+            service.putExtra("Command", "Start");
             startService(service);
         } else if (i == 1) {
-            service.putExtra("Command", 1);
-            stopService(service);
+            service.putExtra("Command", "Stop");
+            startService(service);
         }
+    }
+
+    private boolean isMyServiceRunning(Class<? extends Service> serviceClass) {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        assert manager != null;
+        for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.getName().equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
 }

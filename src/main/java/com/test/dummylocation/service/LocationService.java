@@ -26,6 +26,9 @@ import android.preference.PreferenceManager;
 import android.util.Log;
 import android.widget.Toast;
 
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.test.dummylocation.receiver.ServiceBroadcast;
 
 import java.text.ParseException;
@@ -34,6 +37,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.concurrent.Executor;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -41,12 +45,14 @@ import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 
+import static com.test.dummylocation._log.LogController.writeLog;
+
 public class LocationService extends Service {
 
     // Const values
     private static final String TAG = "LocationService";
-    private static final float MIN_DISTANCE_CHANGE_FOR_UPDATES = 0; // in m  (1KM)
-    private static final long MIN_TIME_BETWEEN_UPDATES = 5 * 1000;    // in ms (1 min)
+    private static final float MIN_DISTANCE_CHANGE_FOR_UPDATES = 100; // in m  (1KM)
+    private static final long MIN_TIME_BETWEEN_UPDATES = 30 * 1000;    // in ms (1 min)
     private static final int NOTIFICATION_ID = 1001;
 
     protected HandlerThread handlerThread;
@@ -55,7 +61,8 @@ public class LocationService extends Service {
     protected boolean isGPSEnabled = false;
     protected boolean isNetworkEnabled = false;
     protected boolean isUpdate = false;
-    protected boolean isRestart;
+    protected boolean isRestart = false;
+    protected String cmd = "";
 
     protected LocationManager locationManager;
     protected LocationListener locationListener;
@@ -78,7 +85,6 @@ public class LocationService extends Service {
         handlerThread.start();
 
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
-        isRestart = true;
 
         Looper serviceLooper = handlerThread.getLooper();
         serviceHandler = new ServiceHandler(serviceLooper);
@@ -95,9 +101,35 @@ public class LocationService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Toast.makeText(this, "Service starting", Toast.LENGTH_SHORT).show();
 
+        locationManager = (LocationManager) getApplicationContext().getSystemService(Context.LOCATION_SERVICE);
+        locationListener = new MyLocationListener();
+
+        locationProvider = locationManager.getBestProvider(new Criteria(), false);
+
+        isGPSEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        isNetworkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+
         Message msg = serviceHandler.obtainMessage();
         msg.arg1 = startId;
-        msg.arg2 = intent.getIntExtra("Command", 0);
+
+        Bundle bundle = intent.getExtras();
+        if (bundle != null) {
+            cmd = bundle.getString("Command");
+        }
+        if (cmd != null) {
+            switch (cmd) {
+                case "Start": {
+                    msg.arg2 = 0;
+                    break;
+                }
+                case "Stop": {
+                    msg.arg2 = 1;
+                }
+                default: {
+                    msg.arg2 = 1;
+                }
+            }
+        }
 
         serviceHandler.sendMessage(msg);
 
@@ -122,7 +154,7 @@ public class LocationService extends Service {
         serviceHandler.removeCallbacksAndMessages(null);
         handlerThread.interrupt();
 
-        if (isRestart) {
+        if (isRestart && isUpdate) {
             selfBroadcast();
         }
     }
@@ -142,17 +174,20 @@ public class LocationService extends Service {
             if (!isGPSEnabled) {
                 Toast.makeText(LocationService.this, "GPS not available.", Toast.LENGTH_SHORT).show();
                 isUpdate = false;
+                isRestart = false;
                 stopSelf(id);
             }
         } else if (locationProvider.equals(LocationManager.NETWORK_PROVIDER)) {
             if (!isNetworkEnabled) {
                 Toast.makeText(LocationService.this, "Network GPS not available.", Toast.LENGTH_SHORT).show();
                 isUpdate = false;
+                isRestart = false;
                 stopSelf(id);
             }
         } else {
             Toast.makeText(LocationService.this, "No Location Provider Found.", Toast.LENGTH_SHORT).show();
             isUpdate = false;
+            isRestart = false;
             stopSelf(id);
         }
     }
@@ -222,15 +257,8 @@ public class LocationService extends Service {
             // Main Job
             switch (msg.arg2) {
                 case 0: {
-                    locationManager = (LocationManager) getApplicationContext().getSystemService(Context.LOCATION_SERVICE);
-                    locationListener = new MyLocationListener();
-
-                    locationProvider = locationManager.getBestProvider(new Criteria(), false);
+                    isRestart = true;
                     isUpdate = true;
-
-                    isGPSEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
-                    isNetworkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-
                     checkPermission(msg.arg1);
                     checkGPS(msg.arg1);
                     assert locationManager != null;
@@ -243,22 +271,36 @@ public class LocationService extends Service {
                 }
                 case 1: {
                     isRestart = false;
-                    stopSelf(msg.arg1);
+                    isUpdate = false;
+
+                    stopSelf();
+                    break;
                 }
                 case 2: {
                     String text = "Current Location: " +
                             "(" + currLocation.getLatitude() + "," + currLocation.getLongitude() +")\n" +
                             "Current Time: " + dateTimeHandler(GetDateTime());
-                    Toast.makeText(LocationService.this, text, Toast.LENGTH_SHORT).show();
                     Log.i(TAG, text);
+
+                    writeLog(text);
                     break;
                 }
                 case 3: {
+                    Location finalLocation = null;
+                    if (locationManager != null) {
+                        finalLocation = locationManager.getLastKnownLocation(locationProvider);
+                    }
+                    if (finalLocation != null) {
+                        currLocation = finalLocation;
+                    }
+
                     String text = "Final Location: " +
                             "(" + currLocation.getLatitude() + "," + currLocation.getLongitude() +")\n" +
                             "Current Time: " + dateTimeHandler(GetDateTime());
-                    Toast.makeText(LocationService.this, text, Toast.LENGTH_SHORT).show();
                     Log.i(TAG, text);
+
+                    writeLog(text);
+
                     break;
                 }
             }
@@ -273,7 +315,7 @@ public class LocationService extends Service {
             currLocation = location;
 
             Message msg = serviceHandler.obtainMessage();
-            msg.arg2 = 1; // update Location
+            msg.arg2 = 2; // update Location
 
             serviceHandler.sendMessage(msg);
         }
@@ -295,6 +337,7 @@ public class LocationService extends Service {
             String text = s + " has been disabled. Halting location updates.";
             Toast.makeText(LocationService.this, text, Toast.LENGTH_SHORT).show();
             isUpdate = false;
+            locationManager.removeUpdates(this);
         }
     }
 
